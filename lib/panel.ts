@@ -12,12 +12,14 @@ const CSS = `
   :host { all: initial; }
   * { box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .tab {
-    position: fixed; right: 0; top: 40%; z-index: 999999;
+    position: fixed; right: 0; top: 40%; z-index: 1000000;
     writing-mode: vertical-rl; padding: 12px 6px;
     background: #0e0d0b; color: #f0ebdf; font-size: 11px; letter-spacing: 0.14em;
     border: 1px solid #2b2823; border-right: none; border-radius: 8px 0 0 8px;
     cursor: pointer; user-select: none;
+    transition: right 0.25s ease;
   }
+  .tab.open { right: 300px; border-right: 1px solid #2b2823; border-radius: 8px 0 0 8px; }
   .tab .dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: #1d3fbf; margin-bottom: 6px; }
   .panel {
     position: fixed; right: 0; top: 64px; bottom: 16px; width: 300px; z-index: 999999;
@@ -87,7 +89,7 @@ export class ScoutPanel {
     this.tab = document.createElement("div");
     this.tab.className = "tab";
     this.tab.innerHTML = `<span class="dot"></span>SCOUT`;
-    this.tab.addEventListener("click", () => this.setOpen(true));
+    this.tab.addEventListener("click", () => this.setOpen(!this.open));
     this.shadow.appendChild(this.tab);
 
     this.panel = document.createElement("div");
@@ -149,14 +151,20 @@ export class ScoutPanel {
       .then(({ panelOpen }) => this.applyOpen(panelOpen !== false));
   }
 
+  private open = true;
+
   /** Panel only belongs on profile pages. */
   setVisible(visible: boolean) {
     this.host.style.display = visible ? "" : "none";
   }
 
+  // The SCOUT handle stays visible either way and toggles the drawer:
+  // it rides the drawer's left edge when open, docks to the screen edge
+  // when closed.
   private applyOpen(open: boolean) {
+    this.open = open;
     this.panel.style.display = open ? "flex" : "none";
-    this.tab.style.display = open ? "none" : "block";
+    this.tab.classList.toggle("open", open);
   }
 
   private setOpen(open: boolean) {

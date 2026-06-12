@@ -156,6 +156,94 @@ function firstText(...selectors: string[]): string {
   return "";
 }
 
+/** Locate the Experience card regardless of LinkedIn's class shuffle. */
+function findExperienceSection(): Element | null {
+  const anchor = document.getElementById("experience");
+  if (anchor) {
+    let el: Element | null = anchor;
+    while (el && el !== document.body) {
+      if (el.tagName === "SECTION") return el;
+      if (el.classList?.contains("artdeco-card") && el.querySelector("ul"))
+        return el;
+      el = el.parentElement;
+    }
+    if (anchor.parentElement?.querySelector("ul")) return anchor.parentElement;
+  }
+  for (const h2 of document.querySelectorAll("h2")) {
+    if (/^experience$/i.test(h2.textContent?.trim() ?? "")) {
+      const sec =
+        h2.closest("section") ??
+        h2.closest('[class*="artdeco-card"]') ??
+        h2.parentElement;
+      if (sec?.querySelector("ul")) return sec;
+    }
+  }
+  return null;
+}
+
+function liSpans(li: Element): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const span of li.querySelectorAll('span[aria-hidden="true"]')) {
+    const t = span.textContent?.trim();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+function entryFromSpans(
+  spans: string[],
+  overrideCompany: string,
+): Position | null {
+  if (!spans.length) return null;
+  const title = spans[0];
+  if (!title) return null;
+  const company =
+    overrideCompany || (spans[1] ?? "").split("·")[0].trim();
+  const startIdx = overrideCompany ? 1 : 2;
+  const dateText =
+    spans.slice(startIdx).find((s) => /\d{4}|present/i.test(s)) ?? "";
+  return {
+    title,
+    company,
+    start: dateText.split(/[-–]/)[0]?.trim() || undefined,
+    end: undefined,
+    current: /present/i.test(dateText),
+  };
+}
+
+/** Scrape the visible Experience list (covers SPA-navigated pages). */
+function scrapeExperienceDom(): Position[] {
+  const container = findExperienceSection();
+  if (!container) return [];
+  const ul = container.querySelector(
+    'ul.pvs-list, ul[class*="pvs-list"], ul',
+  );
+  if (!ul) return [];
+
+  const entries: Position[] = [];
+  for (const li of ul.children) {
+    if (li.tagName !== "LI") continue;
+    // Grouped entry: several roles at one company via a nested list.
+    const subUl = li.querySelector('ul.pvs-list, ul[class*="pvs-list"]');
+    if (subUl && subUl.children.length > 0) {
+      const company = liSpans(li)[0] ?? "";
+      for (const subLi of subUl.children) {
+        if (subLi.tagName !== "LI") continue;
+        const e = entryFromSpans(liSpans(subLi), company);
+        if (e) entries.push(e);
+      }
+    } else {
+      const e = entryFromSpans(liSpans(li), "");
+      if (e) entries.push(e);
+    }
+  }
+  return entries;
+}
+
 /** Slim DOM fallback for SPA-navigated profiles. */
 export function parseDom(): ParsedProfile | null {
   let name = firstText(
@@ -176,24 +264,52 @@ export function parseDom(): ParsedProfile | null {
     'div[class*="text-body-medium"]',
   );
 
-  let role: string | null = null;
-  let company: string | null = null;
-  if (headline) {
-    const m = headline.match(/^(.+?)\s+at\s+(.+?)(?:\s*[|,]|$)/i);
+  // Best source: the Experience section itself.
+  const positions = scrapeExperienceDom();
+  const primary = positions.find((p) => p.current) ?? positions[0] ?? null;
+  let role: string | null = primary?.title ?? null;
+  let company: string | null = primary?.company || null;
+
+  // Headline heuristic only when the experience list is not on screen yet.
+  if (!role && headline) {
+    const m = headline.match(/^(.+?)\s+(?:at|@)\s+(.+?)(?:\s*[|,·]|$)/i);
     if (m) {
       role = m[1].trim();
-      company = m[2].trim();
+      company = company ?? m[2].trim();
     } else {
-      role = headline.split("|")[0].trim();
+      role = headline.split(/[|·]/)[0].trim();
     }
   }
 
-  const city =
+  let city =
     firstText(
       ".text-body-small.inline.t-black--light.break-words",
       '[data-field="location"]',
-      'span[class*="t-black--light"]',
+      ".pv-text-details__left-panel span[class*='t-black--light']",
+      "main section span[class*='t-black--light']",
     ) || null;
+  if (!city) {
+    for (const s of document.querySelectorAll(
+      'script[type="application/ld+json"]',
+    )) {
+      try {
+        const d = JSON.parse(s.textContent ?? "");
+        const graph = Array.isArray(d?.["@graph"]) ? d["@graph"] : [d];
+        for (const node of graph) {
+          const loc =
+            node?.address?.addressLocality ??
+            node?.homeLocation?.address?.addressLocality;
+          if (loc) {
+            city = String(loc);
+            break;
+          }
+        }
+        if (city) break;
+      } catch {
+        // not JSON-LD we understand
+      }
+    }
+  }
 
   return {
     linkedinUrl: cleanUrl(location.href),
@@ -203,7 +319,7 @@ export function parseDom(): ParsedProfile | null {
     city,
     headline: headline || null,
     relationship: domRelationship(),
-    payload: { parser: "dom@1" },
+    payload: { parser: "dom@2", positions },
   };
 }
 

@@ -8,7 +8,7 @@ export default defineContentScript({
     // Re-capture cooldown per profile URL, so SPA re-renders and quick
     // back-and-forth navigation don't hammer the endpoint.
     const COOLDOWN_MS = 10 * 60 * 1000;
-    const lastSent = new Map<string, number>();
+    const lastSent = new Map<string, { at: number; hadRole: boolean }>();
     let currentUrl = "";
     let lastFilledUrl = "";
 
@@ -44,7 +44,10 @@ export default defineContentScript({
         await browser.storage.local.set({
           lastCapture: { name: values.name, at: Date.now() },
         });
-        lastSent.set(values.linkedinUrl || cleanUrl(), Date.now());
+        lastSent.set(values.linkedinUrl || cleanUrl(), {
+          at: Date.now(),
+          hadRole: Boolean(values.role),
+        });
       }
       return res ?? { ok: false, error: "No response from background" };
     });
@@ -70,14 +73,21 @@ export default defineContentScript({
       const { scouting } = await browser.storage.local.get("scouting");
       if (!scouting) return;
 
-      const url = cleanUrl();
-      const last = lastSent.get(url) ?? 0;
-      if (Date.now() - last < COOLDOWN_MS) return;
-
       const profile = parseProfile();
       if (!profile || !profile.name) return;
 
-      lastSent.set(url, Date.now());
+      // Cooldown, with one exception: re-send when this pass found a role
+      // and the earlier send went out before the experience section loaded.
+      const url = cleanUrl();
+      const prev = lastSent.get(url);
+      if (
+        prev &&
+        Date.now() - prev.at < COOLDOWN_MS &&
+        (prev.hadRole || !profile.role)
+      )
+        return;
+
+      lastSent.set(url, { at: Date.now(), hadRole: Boolean(profile.role) });
       const res = await browser.runtime.sendMessage({
         type: "CAPTURE",
         payload: profile,
