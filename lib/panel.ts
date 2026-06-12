@@ -158,6 +158,11 @@ export class ScoutPanel {
     this.host.style.display = visible ? "" : "none";
   }
 
+  /** Remove all UI (used when the extension context is invalidated). */
+  destroy() {
+    this.host.remove();
+  }
+
   // The SCOUT handle stays visible either way and toggles the drawer:
   // it rides the drawer's left edge when open, docks to the screen edge
   // when closed.

@@ -16,9 +16,43 @@ export default defineContentScript({
       return location.href.split("?")[0].split("#")[0].replace(/\/$/, "");
     }
 
+    // Visible page text; the server extracts any fields the local parser
+    // missed using AI, which survives LinkedIn DOM changes entirely.
+    function pageText(): string {
+      const root = document.querySelector("main") ?? document.body;
+      return ((root as HTMLElement).innerText ?? "")
+        .replace(/\n{3,}/g, "\n\n")
+        .slice(0, 15000);
+    }
+
+    // When the extension is reloaded, content scripts in already-open tabs
+    // are orphaned and every runtime/storage call fails forever. Detect it
+    // and shut down cleanly instead of spamming the console.
+    let dead = false;
+    function alive(): boolean {
+      if (dead) return false;
+      if (!browser.runtime?.id) {
+        shutdown();
+        return false;
+      }
+      return true;
+    }
+    function shutdown() {
+      if (dead) return;
+      dead = true;
+      clearInterval(urlTimer);
+      try {
+        panel.destroy();
+      } catch {
+        // host already gone
+      }
+      console.info("[scout] extension reloaded; refresh this tab to resume");
+    }
+
     // The right-edge drawer. Its send button submits whatever is in the
     // fields, including manual email/phone/seniority.
     const panel = new ScoutPanel(async (values) => {
+      if (!alive()) return { ok: false, error: "Refresh the tab" };
       if (!values.name) return { ok: false, error: "Name is required" };
       const scraped = parseProfile();
       const res = await browser.runtime.sendMessage({
@@ -34,6 +68,7 @@ export default defineContentScript({
           email: values.email || null,
           phone: values.phone || null,
           seniority: values.seniority || null,
+          pageText: pageText(),
           payload: {
             ...(scraped?.payload ?? { parser: "manual@1" }),
             manual: true,
@@ -67,39 +102,45 @@ export default defineContentScript({
     }
 
     async function maybeAutoCapture() {
+      if (!alive()) return;
       const slug = profileSlug(location.href);
       if (!slug) return;
 
-      const { scouting } = await browser.storage.local.get("scouting");
-      if (!scouting) return;
+      try {
+        const { scouting } = await browser.storage.local.get("scouting");
+        if (!scouting) return;
 
-      const profile = parseProfile();
-      if (!profile || !profile.name) return;
+        const profile = parseProfile();
+        if (!profile || !profile.name) return;
 
-      // Cooldown, with one exception: re-send when this pass found a role
-      // and the earlier send went out before the experience section loaded.
-      const url = cleanUrl();
-      const prev = lastSent.get(url);
-      if (
-        prev &&
-        Date.now() - prev.at < COOLDOWN_MS &&
-        (prev.hadRole || !profile.role)
-      )
-        return;
+        // Cooldown, with one exception: re-send when this pass found a role
+        // and the earlier send went out before the experience section loaded.
+        const url = cleanUrl();
+        const prev = lastSent.get(url);
+        if (
+          prev &&
+          Date.now() - prev.at < COOLDOWN_MS &&
+          (prev.hadRole || !profile.role)
+        )
+          return;
 
-      lastSent.set(url, { at: Date.now(), hadRole: Boolean(profile.role) });
-      const res = await browser.runtime.sendMessage({
-        type: "CAPTURE",
-        payload: profile,
-      });
-      if (res?.ok) {
-        await browser.storage.local.set({
-          lastCapture: { name: profile.name, at: Date.now() },
+        lastSent.set(url, { at: Date.now(), hadRole: Boolean(profile.role) });
+        const res = await browser.runtime.sendMessage({
+          type: "CAPTURE",
+          payload: { ...profile, pageText: pageText() },
         });
-        panel.setStatus("Auto-captured ✓", "ok");
-      } else {
-        lastSent.delete(url); // allow retry on next settle
-        if (res?.error) console.warn("[scout] capture failed:", res.error);
+        if (res?.ok) {
+          await browser.storage.local.set({
+            lastCapture: { name: profile.name, at: Date.now() },
+          });
+          panel.setStatus("Auto-captured ✓", "ok");
+        } else {
+          lastSent.delete(url); // allow retry on next settle
+          if (res?.error) console.warn("[scout] capture failed:", res.error);
+        }
+      } catch (err) {
+        if (String(err).includes("Extension context invalidated")) shutdown();
+        else throw err;
       }
     }
 
@@ -117,7 +158,8 @@ export default defineContentScript({
       }, 4000);
     }
 
-    setInterval(() => {
+    const urlTimer = setInterval(() => {
+      if (!alive()) return;
       if (location.href !== currentUrl) {
         currentUrl = location.href;
         onUrlSettled();
