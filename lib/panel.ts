@@ -43,6 +43,11 @@ const CSS = `
   }
   input:focus, select:focus { outline: none; border-color: #f0ebdf; }
   .foot { padding: 12px 14px; border-top: 1px solid #2b2823; }
+  .scan {
+    width: 100%; padding: 9px; margin-bottom: 8px; border: 1px solid #1d3fbf; border-radius: 6px;
+    cursor: pointer; background: #181511; color: #8ba3f5; font-weight: 600; font-size: 13px; font-family: inherit;
+  }
+  .scan:disabled { opacity: 0.5; }
   .send {
     width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer;
     background: #f0ebdf; color: #0e0d0b; font-weight: 600; font-size: 13px; font-family: inherit;
@@ -68,6 +73,12 @@ export type PanelSend = (values: Record<string, string>) => Promise<{
   error?: string;
 }>;
 
+export type PanelScan = () => Promise<{
+  ok: boolean;
+  fields?: Partial<Record<string, string>>;
+  error?: string;
+}>;
+
 export class ScoutPanel {
   private shadow: ShadowRoot;
   private host: HTMLDivElement;
@@ -75,7 +86,10 @@ export class ScoutPanel {
   private tab: HTMLDivElement;
   private touched = new Set<string>();
 
-  constructor(private send: PanelSend) {
+  constructor(
+    private send: PanelSend,
+    private scan: PanelScan,
+  ) {
     const host = document.createElement("div");
     host.id = HOST_ID;
     document.documentElement.appendChild(host);
@@ -115,6 +129,7 @@ export class ScoutPanel {
         </label>
       </div>
       <div class="foot">
+        <button class="scan">Scan this profile</button>
         <button class="send">Send to queue</button>
         <div class="status"></div>
       </div>
@@ -131,6 +146,27 @@ export class ScoutPanel {
         this.touched.add((el as HTMLInputElement).name),
       );
     }
+
+    this.panel.querySelector(".scan")!.addEventListener("click", async () => {
+      const btn = this.panel.querySelector(".scan") as HTMLButtonElement;
+      btn.disabled = true;
+      this.setStatus("Scanning…", "");
+      const res = await this.scan();
+      btn.disabled = false;
+      if (res.ok && res.fields) {
+        // Scan results fill any field the user has not edited.
+        for (const [name, value] of Object.entries(res.fields)) {
+          if (!value || this.touched.has(name)) continue;
+          const el = this.shadow.querySelector(
+            `[name="${name}"]`,
+          ) as HTMLInputElement | null;
+          if (el) el.value = value;
+        }
+        this.setStatus("Scanned ✓ review and send", "ok");
+      } else {
+        this.setStatus(res.error ?? "Scan failed", "err");
+      }
+    });
 
     this.panel.querySelector(".send")!.addEventListener("click", async () => {
       const btn = this.panel.querySelector(".send") as HTMLButtonElement;

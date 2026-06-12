@@ -85,6 +85,16 @@ export default defineContentScript({
         });
       }
       return res ?? { ok: false, error: "No response from background" };
+    }, async () => {
+      // "Scan this profile": AI-extract role/company/city from page text.
+      if (!alive()) return { ok: false, error: "Refresh the tab" };
+      const text = pageText();
+      if (!text) return { ok: false, error: "No page text" };
+      const res = await browser.runtime.sendMessage({
+        type: "EXTRACT",
+        payload: { pageText: text },
+      });
+      return res ?? { ok: false, error: "No response from background" };
     });
 
     function refreshPanel() {
