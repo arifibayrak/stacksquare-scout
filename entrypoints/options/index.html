@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stacksquare Scout · Settings</title>
+    <style>
+      body {
+        max-width: 480px; margin: 48px auto; padding: 0 24px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #0e0d0b; color: #f0ebdf;
+      }
+      h1 { font-size: 18px; }
+      label { display: block; margin-top: 20px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #867e70; }
+      input {
+        width: 100%; margin-top: 6px; padding: 10px 12px; box-sizing: border-box;
+        border: 1px solid #2b2823; border-radius: 6px; background: #181511;
+        color: #f0ebdf; font-family: inherit; font-size: 14px;
+      }
+      input:focus { outline: none; border-color: #f0ebdf; }
+      button {
+        margin-top: 24px; padding: 10px 20px; border: none; border-radius: 6px;
+        background: #f0ebdf; color: #0e0d0b; font-family: inherit; font-weight: 600;
+        font-size: 14px; cursor: pointer;
+      }
+      .saved { margin-left: 12px; color: #6fbf73; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>Stacksquare Scout · Settings</h1>
+    <label>
+      API URL
+      <input type="url" id="apiUrl" placeholder="https://stacksquare.ai" />
+    </label>
+    <label>
+      Your API key
+      <input type="password" id="apiKey" placeholder="sk_scout_..." />
+    </label>
+    <button id="save">Save</button><span class="saved" id="saved"></span>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
