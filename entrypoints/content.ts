@@ -1,25 +1,24 @@
-import {
-  parseProfile,
-  profileSlug,
-  parseContactInfo,
-  isContactOverlay,
-  contactOverlayUrl,
-} from "../lib/parser";
+import { parseProfile, profileSlug } from "../lib/parser";
 import { ScoutPanel } from "../lib/panel";
 
 export default defineContentScript({
   matches: ["https://www.linkedin.com/*"],
   runAt: "document_idle",
   main() {
-    // Re-capture cooldown per profile URL, so SPA re-renders and quick
-    // back-and-forth navigation don't hammer the endpoint.
-    const COOLDOWN_MS = 10 * 60 * 1000;
-    const lastSent = new Map<string, { at: number; hadRole: boolean }>();
     let currentUrl = "";
     let lastFilledUrl = "";
-    let lastLinks: string[] = [];
-    let lastContactEmail: string | null = null;
-    let lastContactPhone: string | null = null;
+    // The popup toggle controls whether the capture panel is shown.
+    let scoutingOn = true;
+    browser.storage.local.get("scouting").then(({ scouting }) => {
+      scoutingOn = scouting !== false;
+      refreshPanel();
+    });
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes.scouting) {
+        scoutingOn = changes.scouting.newValue !== false;
+        refreshPanel();
+      }
+    });
 
     function cleanUrl(): string {
       return location.href.split("?")[0].split("#")[0].replace(/\/$/, "");
@@ -74,24 +73,19 @@ export default defineContentScript({
           city: values.city || null,
           headline: scraped?.headline ?? null,
           relationship: scraped?.relationship ?? null,
-          email: values.email || lastContactEmail || null,
-          phone: values.phone || lastContactPhone || null,
+          email: values.email || null,
+          phone: values.phone || null,
           seniority: values.seniority || null,
           pageText: pageText(),
           payload: {
             ...(scraped?.payload ?? { parser: "manual@1" }),
             manual: true,
-            websites: lastLinks,
           },
         },
       });
       if (res?.ok) {
         await browser.storage.local.set({
           lastCapture: { name: values.name, at: Date.now() },
-        });
-        lastSent.set(values.linkedinUrl || cleanUrl(), {
-          at: Date.now(),
-          hadRole: Boolean(values.role),
         });
       }
       return res ?? { ok: false, error: "No response from background" };
@@ -105,108 +99,29 @@ export default defineContentScript({
         payload: { pageText: text },
       });
       return res ?? { ok: false, error: "No response from background" };
-    }, () => {
-      // "Get contact info": open LinkedIn's own contact-info overlay. The
-      // overlay-detection branch below harvests it once it renders.
-      const slug = profileSlug(location.href);
-      if (slug) {
-        baseProfileUrl = cleanUrl();
-        location.href = contactOverlayUrl(slug);
-      }
     });
 
-    let baseProfileUrl = "";
-
-    function harvestContactInfo() {
-      const info = parseContactInfo();
-      if (!info) return;
-      lastLinks = [...info.websites, info.twitter].filter(Boolean) as string[];
-      lastContactEmail = info.email;
-      lastContactPhone = info.phone;
-      panel.fillContactInfo(info);
-    }
-
+    // Nothing is recorded automatically. The panel fills its fields from the
+    // page; capturing happens only when the user clicks Send (or Scan).
     function refreshPanel() {
+      if (!alive()) return;
       const slug = profileSlug(location.href);
-      panel.setVisible(Boolean(slug));
-      if (!slug) return;
-
-      // On the contact-info overlay: keep the panel as-is and harvest links.
-      if (isContactOverlay(location.href)) {
-        harvestContactInfo();
-        return;
-      }
+      panel.setVisible(Boolean(slug) && scoutingOn);
+      if (!slug || !scoutingOn) return;
 
       const profile = parseProfile();
       if (!profile) return;
 
-      // A genuinely new person resets the harvested contact info.
       const url = cleanUrl();
       const fresh = url !== lastFilledUrl;
-      if (fresh && url !== baseProfileUrl) {
-        lastLinks = [];
-        lastContactEmail = null;
-        lastContactPhone = null;
-      }
       panel.fill(profile, fresh);
       if (fresh) lastFilledUrl = url;
     }
 
-    async function maybeAutoCapture() {
-      if (!alive()) return;
-      const slug = profileSlug(location.href);
-      if (!slug) return;
-
-      try {
-        const { scouting } = await browser.storage.local.get("scouting");
-        if (!scouting) return;
-
-        const profile = parseProfile();
-        if (!profile || !profile.name) return;
-
-        // Cooldown, with one exception: re-send when this pass found a role
-        // and the earlier send went out before the experience section loaded.
-        const url = cleanUrl();
-        const prev = lastSent.get(url);
-        if (
-          prev &&
-          Date.now() - prev.at < COOLDOWN_MS &&
-          (prev.hadRole || !profile.role)
-        )
-          return;
-
-        lastSent.set(url, { at: Date.now(), hadRole: Boolean(profile.role) });
-        const res = await browser.runtime.sendMessage({
-          type: "CAPTURE",
-          payload: { ...profile, pageText: pageText() },
-        });
-        if (res?.ok) {
-          await browser.storage.local.set({
-            lastCapture: { name: profile.name, at: Date.now() },
-          });
-          panel.setStatus("Auto-captured ✓", "ok");
-        } else {
-          lastSent.delete(url); // allow retry on next settle
-          if (res?.error) console.warn("[scout] capture failed:", res.error);
-        }
-      } catch (err) {
-        if (String(err).includes("Extension context invalidated")) shutdown();
-        else throw err;
-      }
-    }
-
-    // LinkedIn is an SPA: watch for URL changes, let the new page settle,
-    // then refill the panel and capture. The second timer catches
-    // lazy-loaded sections.
+    // The second pass catches the lazy-loaded experience section.
     function onUrlSettled() {
-      setTimeout(() => {
-        refreshPanel();
-        maybeAutoCapture();
-      }, 1200);
-      setTimeout(() => {
-        refreshPanel();
-        maybeAutoCapture();
-      }, 4000);
+      setTimeout(refreshPanel, 1200);
+      setTimeout(refreshPanel, 4000);
     }
 
     const urlTimer = setInterval(() => {

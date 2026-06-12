@@ -14,8 +14,8 @@ async function render() {
     })`;
   } else {
     status.textContent = scouting
-      ? "Open LinkedIn profiles to capture them."
-      : "Off. Nothing is captured.";
+      ? "Panel shows on profiles. Click Send to capture."
+      : "Off. The capture panel is hidden.";
   }
 }
 
