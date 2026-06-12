@@ -29,6 +29,75 @@ export function profileSlug(href: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+export function isContactOverlay(href: string): boolean {
+  return /\/overlay\/contact-info/.test(href);
+}
+
+export function contactOverlayUrl(slug: string): string {
+  return `https://www.linkedin.com/in/${encodeURIComponent(
+    slug,
+  )}/overlay/contact-info/`;
+}
+
+export type ContactInfo = {
+  email: string | null;
+  phone: string | null;
+  websites: string[];
+  twitter: string | null;
+};
+
+/**
+ * Harvest the "Contact info" overlay. Reads semantic hrefs (mailto:, tel:)
+ * and the modal's links/text, so it survives class-name churn.
+ */
+export function parseContactInfo(): ContactInfo | null {
+  const modal =
+    document.querySelector(
+      '.artdeco-modal, [role="dialog"], section.pv-contact-info',
+    ) ?? null;
+  if (!modal && !isContactOverlay(location.href)) return null;
+  const scope: ParentNode = modal ?? document.body;
+
+  const email =
+    scope
+      .querySelector('a[href^="mailto:"]')
+      ?.getAttribute("href")
+      ?.replace(/^mailto:/, "")
+      .split("?")[0]
+      .trim() || null;
+
+  let phone =
+    scope
+      .querySelector('a[href^="tel:"]')
+      ?.getAttribute("href")
+      ?.replace(/^tel:/, "")
+      .trim() || null;
+  if (!phone) {
+    const text = (modal as HTMLElement | null)?.innerText ?? "";
+    const m = text.match(/(\+?\d[\d\s().-]{7,}\d)/);
+    if (m && /phone/i.test(text)) phone = m[1].trim();
+  }
+
+  const websites = [...scope.querySelectorAll('a[href^="http"]')]
+    .map((a) => (a as HTMLAnchorElement).href)
+    .filter(
+      (h) =>
+        !/linkedin\.com|licdn\.com/.test(h) && !h.startsWith("mailto:"),
+    );
+  const uniqueSites = [...new Set(websites)];
+
+  const twitter =
+    uniqueSites.find((w) => /twitter\.com|x\.com/.test(w)) ?? null;
+
+  if (!email && !phone && uniqueSites.length === 0) return null;
+  return {
+    email,
+    phone,
+    websites: uniqueSites.filter((w) => w !== twitter),
+    twitter,
+  };
+}
+
 function cleanUrl(href: string): string {
   return href.split("?")[0].split("#")[0].replace(/\/$/, "");
 }

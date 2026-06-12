@@ -1,4 +1,10 @@
-import { parseProfile, profileSlug } from "../lib/parser";
+import {
+  parseProfile,
+  profileSlug,
+  parseContactInfo,
+  isContactOverlay,
+  contactOverlayUrl,
+} from "../lib/parser";
 import { ScoutPanel } from "../lib/panel";
 
 export default defineContentScript({
@@ -11,6 +17,9 @@ export default defineContentScript({
     const lastSent = new Map<string, { at: number; hadRole: boolean }>();
     let currentUrl = "";
     let lastFilledUrl = "";
+    let lastLinks: string[] = [];
+    let lastContactEmail: string | null = null;
+    let lastContactPhone: string | null = null;
 
     function cleanUrl(): string {
       return location.href.split("?")[0].split("#")[0].replace(/\/$/, "");
@@ -65,13 +74,14 @@ export default defineContentScript({
           city: values.city || null,
           headline: scraped?.headline ?? null,
           relationship: scraped?.relationship ?? null,
-          email: values.email || null,
-          phone: values.phone || null,
+          email: values.email || lastContactEmail || null,
+          phone: values.phone || lastContactPhone || null,
           seniority: values.seniority || null,
           pageText: pageText(),
           payload: {
             ...(scraped?.payload ?? { parser: "manual@1" }),
             manual: true,
+            websites: lastLinks,
           },
         },
       });
@@ -95,18 +105,49 @@ export default defineContentScript({
         payload: { pageText: text },
       });
       return res ?? { ok: false, error: "No response from background" };
+    }, () => {
+      // "Get contact info": open LinkedIn's own contact-info overlay. The
+      // overlay-detection branch below harvests it once it renders.
+      const slug = profileSlug(location.href);
+      if (slug) {
+        baseProfileUrl = cleanUrl();
+        location.href = contactOverlayUrl(slug);
+      }
     });
+
+    let baseProfileUrl = "";
+
+    function harvestContactInfo() {
+      const info = parseContactInfo();
+      if (!info) return;
+      lastLinks = [...info.websites, info.twitter].filter(Boolean) as string[];
+      lastContactEmail = info.email;
+      lastContactPhone = info.phone;
+      panel.fillContactInfo(info);
+    }
 
     function refreshPanel() {
       const slug = profileSlug(location.href);
       panel.setVisible(Boolean(slug));
       if (!slug) return;
 
+      // On the contact-info overlay: keep the panel as-is and harvest links.
+      if (isContactOverlay(location.href)) {
+        harvestContactInfo();
+        return;
+      }
+
       const profile = parseProfile();
       if (!profile) return;
 
+      // A genuinely new person resets the harvested contact info.
       const url = cleanUrl();
       const fresh = url !== lastFilledUrl;
+      if (fresh && url !== baseProfileUrl) {
+        lastLinks = [];
+        lastContactEmail = null;
+        lastContactPhone = null;
+      }
       panel.fill(profile, fresh);
       if (fresh) lastFilledUrl = url;
     }

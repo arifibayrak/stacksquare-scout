@@ -48,6 +48,13 @@ const CSS = `
     cursor: pointer; background: #181511; color: #8ba3f5; font-weight: 600; font-size: 13px; font-family: inherit;
   }
   .scan:disabled { opacity: 0.5; }
+  .contact-btn {
+    width: 100%; margin-top: 12px; padding: 8px; border: 1px solid #2b2823; border-radius: 6px;
+    cursor: pointer; background: #181511; color: #8ba3f5; font-weight: 600; font-size: 12px; font-family: inherit;
+  }
+  .links { margin-top: 8px; font-size: 11px; }
+  .links a { display: block; color: #8ba3f5; text-decoration: none; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .links a:hover { text-decoration: underline; }
   .send {
     width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer;
     background: #f0ebdf; color: #0e0d0b; font-weight: 600; font-size: 13px; font-family: inherit;
@@ -79,6 +86,8 @@ export type PanelScan = () => Promise<{
   error?: string;
 }>;
 
+export type PanelContactInfo = () => void;
+
 export class ScoutPanel {
   private shadow: ShadowRoot;
   private host: HTMLDivElement;
@@ -89,6 +98,7 @@ export class ScoutPanel {
   constructor(
     private send: PanelSend,
     private scan: PanelScan,
+    private getContactInfo: PanelContactInfo,
   ) {
     const host = document.createElement("div");
     host.id = HOST_ID;
@@ -127,6 +137,8 @@ export class ScoutPanel {
             <option value="c_suite">C-suite</option>
           </select>
         </label>
+        <button class="contact-btn" type="button">Get contact info ↗</button>
+        <div class="links" hidden></div>
       </div>
       <div class="foot">
         <button class="scan">Scan this profile</button>
@@ -146,6 +158,13 @@ export class ScoutPanel {
         this.touched.add((el as HTMLInputElement).name),
       );
     }
+
+    this.panel
+      .querySelector(".contact-btn")!
+      .addEventListener("click", () => {
+        this.setStatus("Opening contact info…", "");
+        this.getContactInfo();
+      });
 
     this.panel.querySelector(".scan")!.addEventListener("click", async () => {
       const btn = this.panel.querySelector(".scan") as HTMLButtonElement;
@@ -241,6 +260,45 @@ export class ScoutPanel {
       this.setStatus("", "");
     }
   }
+
+  /** Merge harvested contact info into the fields; show the links found. */
+  fillContactInfo(info: {
+    email: string | null;
+    phone: string | null;
+    websites: string[];
+    twitter: string | null;
+  }) {
+    const setIfBlank = (name: string, value: string | null) => {
+      if (!value || this.touched.has(name)) return;
+      const el = this.shadow.querySelector(
+        `[name="${name}"]`,
+      ) as HTMLInputElement | null;
+      if (el && !el.value) el.value = value;
+    };
+    setIfBlank("email", info.email);
+    setIfBlank("phone", info.phone);
+
+    this.links = [...info.websites, info.twitter].filter(Boolean) as string[];
+    const box = this.panel.querySelector(".links") as HTMLElement;
+    if (this.links.length) {
+      box.hidden = false;
+      box.innerHTML = this.links
+        .map((u) => `<a href="${u}" target="_blank" rel="noreferrer">${u}</a>`)
+        .join("");
+    }
+    const found = [
+      info.email && "email",
+      info.phone && "phone",
+      this.links.length && `${this.links.length} link(s)`,
+    ].filter(Boolean);
+    this.setStatus(
+      found.length ? `Found ${found.join(", ")} ✓` : "No contact info shown",
+      found.length ? "ok" : "err",
+    );
+  }
+
+  /** Links harvested from the contact-info overlay, sent with the capture. */
+  links: string[] = [];
 
   values(): Record<string, string> {
     const out: Record<string, string> = {};
