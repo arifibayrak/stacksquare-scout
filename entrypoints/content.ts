@@ -7,6 +7,8 @@ export default defineContentScript({
   main() {
     let currentUrl = "";
     let lastFilledUrl = "";
+    let lastScannedUrl = "";
+    let autoScanTimer: ReturnType<typeof setTimeout> | undefined;
     // The popup toggle controls whether the capture panel is shown.
     let scoutingOn = true;
     browser.storage.local.get("scouting").then(({ scouting }) => {
@@ -49,6 +51,7 @@ export default defineContentScript({
       if (dead) return;
       dead = true;
       clearInterval(urlTimer);
+      clearTimeout(autoScanTimer);
       try {
         panel.destroy();
       } catch {
@@ -76,6 +79,9 @@ export default defineContentScript({
           email: values.email || null,
           phone: values.phone || null,
           seniority: values.seniority || null,
+          // Chosen List: null routes to the generic Scout queue, an id files
+          // the profile straight into that CRM list (Research segment).
+          segmentId: values.list || null,
           pageText: pageText(),
           payload: {
             ...(scraped?.payload ?? { parser: "manual@1" }),
@@ -99,6 +105,11 @@ export default defineContentScript({
         payload: { pageText: text },
       });
       return res ?? { ok: false, error: "No response from background" };
+    }, async () => {
+      // Populate the List picker from the CRM's Research segments.
+      if (!alive()) return { ok: false, error: "Refresh the tab" };
+      const res = await browser.runtime.sendMessage({ type: "LISTS" });
+      return res ?? { ok: false, error: "No response from background" };
     });
 
     // Nothing is recorded automatically. The panel fills its fields from the
@@ -116,6 +127,20 @@ export default defineContentScript({
       const fresh = url !== lastFilledUrl;
       panel.fill(profile, fresh);
       if (fresh) lastFilledUrl = url;
+      scheduleAutoScan(url);
+    }
+
+    // Open a profile and, once it settles (~1.5s), auto-run the AI scan to fill
+    // anything the local parser missed. Fires once per profile; skips when the
+    // core fields are already present (checked inside panel.autoScan).
+    function scheduleAutoScan(url: string) {
+      if (!scoutingOn || url === lastScannedUrl) return;
+      lastScannedUrl = url;
+      clearTimeout(autoScanTimer);
+      autoScanTimer = setTimeout(() => {
+        if (!alive() || cleanUrl() !== url) return;
+        panel.autoScan();
+      }, 1500);
     }
 
     // The second pass catches the lazy-loaded experience section.

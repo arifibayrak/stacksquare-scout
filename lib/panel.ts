@@ -36,6 +36,14 @@ const CSS = `
   .body { flex: 1; overflow-y: auto; padding: 12px 14px; }
   label { display: block; margin-top: 10px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #867e70; }
   label:first-child { margin-top: 0; }
+  .listlabel { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .listlabel select { flex: 1 1 100%; margin-top: 4px; }
+  .listlabel .refresh {
+    margin: 0 0 0 auto; padding: 0; width: 20px; height: 18px; line-height: 1;
+    border: 1px solid #2b2823; border-radius: 4px; background: #181511;
+    color: #867e70; font-size: 12px; cursor: pointer;
+  }
+  .listlabel .refresh:hover { color: #f0ebdf; border-color: #f0ebdf; }
   input, select {
     width: 100%; margin-top: 4px; padding: 7px 9px;
     border: 1px solid #2b2823; border-radius: 6px; background: #181511;
@@ -71,11 +79,22 @@ const FIELDS = [
 export type PanelSend = (values: Record<string, string>) => Promise<{
   ok: boolean;
   error?: string;
+  destination?: "queue" | "segment";
+  segment?: { name?: string };
+  linked?: boolean;
 }>;
 
 export type PanelScan = () => Promise<{
   ok: boolean;
   fields?: Partial<Record<string, string>>;
+  error?: string;
+}>;
+
+export type ScoutList = { id: string; name: string };
+
+export type PanelLoadLists = () => Promise<{
+  ok: boolean;
+  lists?: ScoutList[];
   error?: string;
 }>;
 
@@ -90,6 +109,7 @@ export class ScoutPanel {
   constructor(
     private send: PanelSend,
     private scan: PanelScan,
+    private loadLists: PanelLoadLists,
   ) {
     const host = document.createElement("div");
     host.id = HOST_ID;
@@ -115,6 +135,13 @@ export class ScoutPanel {
         <button class="close" title="Collapse">✕</button>
       </div>
       <div class="body">
+        <label class="listlabel">
+          List
+          <button class="refresh" type="button" title="Refresh lists">↻</button>
+          <select name="list">
+            <option value="">Scout queue (unsorted)</option>
+          </select>
+        </label>
         ${FIELDS.map(
           ([name, label, type]) =>
             `<label>${label}<input name="${name}" type="${type}" /></label>`,
@@ -148,26 +175,9 @@ export class ScoutPanel {
       );
     }
 
-    this.panel.querySelector(".scan")!.addEventListener("click", async () => {
-      const btn = this.panel.querySelector(".scan") as HTMLButtonElement;
-      btn.disabled = true;
-      this.setStatus("Scanning…", "");
-      const res = await this.scan();
-      btn.disabled = false;
-      if (res.ok && res.fields) {
-        // Scan results fill any field the user has not edited.
-        for (const [name, value] of Object.entries(res.fields)) {
-          if (!value || this.touched.has(name)) continue;
-          const el = this.shadow.querySelector(
-            `[name="${name}"]`,
-          ) as HTMLInputElement | null;
-          if (el) el.value = value;
-        }
-        this.setStatus("Scanned ✓ review and send", "ok");
-      } else {
-        this.setStatus(res.error ?? "Scan failed", "err");
-      }
-    });
+    this.panel
+      .querySelector(".scan")!
+      .addEventListener("click", () => this.runScan(false));
 
     this.panel.querySelector(".send")!.addEventListener("click", async () => {
       const btn = this.panel.querySelector(".send") as HTMLButtonElement;
@@ -176,16 +186,125 @@ export class ScoutPanel {
       const res = await this.send(this.values());
       btn.disabled = false;
       if (res.ok) {
-        this.setStatus("In the queue ✓", "ok");
+        const where =
+          res.destination === "segment" && res.segment?.name
+            ? res.linked === false
+              ? `Already in ${res.segment.name} ✓`
+              : `Added to ${res.segment.name} ✓`
+            : "In the queue ✓";
+        this.setStatus(where, "ok");
         this.touched.clear();
       } else {
         this.setStatus(res.error ?? "Failed", "err");
       }
     });
 
+    // The chosen list persists globally: pick "Turkish founders in London"
+    // once and every profile you Send afterwards files into it.
+    const listSel = this.panel.querySelector(
+      'select[name="list"]',
+    ) as HTMLSelectElement;
+    listSel.addEventListener("change", () => {
+      const name =
+        listSel.options[listSel.selectedIndex]?.textContent ?? "";
+      browser.storage.local.set({
+        scoutListId: listSel.value || "",
+        scoutListName: listSel.value ? name : "",
+      });
+    });
+    this.panel
+      .querySelector(".refresh")!
+      .addEventListener("click", () => this.populateLists());
+    this.populateLists();
+
     browser.storage.local
       .get("panelOpen")
       .then(({ panelOpen }) => this.applyOpen(panelOpen !== false));
+  }
+
+  /** Fetch the CRM lists and rebuild the picker, restoring the saved choice. */
+  private async populateLists() {
+    const sel = this.shadow.querySelector(
+      'select[name="list"]',
+    ) as HTMLSelectElement | null;
+    if (!sel) return;
+    const { scoutListId } = await browser.storage.local.get("scoutListId");
+    const res = await this.loadLists();
+    // Rebuild: default "unsorted" option plus one per CRM list.
+    sel.innerHTML = '<option value="">Scout queue (unsorted)</option>';
+    if (res.ok && res.lists && res.lists.length) {
+      for (const list of res.lists) {
+        const opt = document.createElement("option");
+        opt.value = list.id;
+        opt.textContent = list.name;
+        sel.appendChild(opt);
+      }
+    } else {
+      // Say why the picker is empty instead of failing silently.
+      const opt = document.createElement("option");
+      opt.disabled = true;
+      opt.textContent = res.ok
+        ? "No lists yet — create one in Research"
+        : `Lists unavailable: ${res.error ?? "error"}`;
+      sel.appendChild(opt);
+    }
+    // Restore the saved list if it still exists.
+    sel.value =
+      scoutListId &&
+      Array.from(sel.options).some((o) => o.value === scoutListId)
+        ? (scoutListId as string)
+        : "";
+  }
+
+  private scanning = false;
+
+  /** True once role, company and city are all filled (local parser succeeded). */
+  private hasCoreFields(): boolean {
+    const v = this.values();
+    return Boolean(v.role && v.company && v.city);
+  }
+
+  /**
+   * Auto-scan a freshly opened profile: AI-fill only the blanks the local
+   * parser missed, and stay quiet on failure (e.g. no API key set). Called by
+   * the content script ~1.5s after each new profile settles.
+   */
+  async autoScan() {
+    if (this.scanning || this.hasCoreFields()) return;
+    await this.runScan(true);
+  }
+
+  /**
+   * Run the AI scan. Manual mode overwrites any field the user has not edited;
+   * auto mode fills only empty fields so it never clobbers the local parser.
+   */
+  private async runScan(auto: boolean) {
+    if (this.scanning) return;
+    this.scanning = true;
+    const btn = this.panel.querySelector(".scan") as HTMLButtonElement;
+    btn.disabled = true;
+    this.setStatus(auto ? "Auto-scanning…" : "Scanning…", "");
+    const res = await this.scan();
+    btn.disabled = false;
+    this.scanning = false;
+    if (res.ok && res.fields) {
+      for (const [name, value] of Object.entries(res.fields)) {
+        if (!value || this.touched.has(name)) continue;
+        const el = this.shadow.querySelector(
+          `[name="${name}"]`,
+        ) as HTMLInputElement | null;
+        if (!el || (auto && el.value)) continue;
+        el.value = value;
+      }
+      this.setStatus(
+        auto ? "Auto-scanned ✓ review and send" : "Scanned ✓ review and send",
+        "ok",
+      );
+    } else if (!auto) {
+      // Auto mode stays silent so a missing key does not flash a red error on
+      // every profile; the manual Scan button still surfaces the reason.
+      this.setStatus(res.error ?? "Scan failed", "err");
+    }
   }
 
   private open = true;

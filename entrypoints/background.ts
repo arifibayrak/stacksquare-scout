@@ -19,7 +19,36 @@ export default defineBackground(() => {
       handleExtract(message.payload).then(sendResponse);
       return true;
     }
+    if (message?.type === "LISTS") {
+      handleLists().then(sendResponse);
+      return true;
+    }
   });
+
+  async function handleLists() {
+    const { apiUrl, apiKey } = await browser.storage.sync.get([
+      "apiUrl",
+      "apiKey",
+    ]);
+    const base = (apiUrl as string) || "https://stacksquare.ai";
+    if (!apiKey) return { ok: false, error: "No API key set." };
+    try {
+      const res = await fetch(`${base}/api/segments`, {
+        headers: { "X-API-Key": apiKey as string },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, error: err.error ?? `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return { ok: true, lists: data.lists ?? [] };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Network error",
+      };
+    }
+  }
 
   async function handleExtract(payload: unknown) {
     const { apiUrl, apiKey } = await browser.storage.sync.get([
@@ -81,7 +110,9 @@ export default defineBackground(() => {
         const { scouting } = await browser.storage.local.get("scouting");
         await browser.action.setBadgeText({ text: scouting ? "ON" : "" });
       }, 1800);
-      return { ok: true, id: data.id, status: data.status };
+      // Pass the whole response through (destination, segment, id, status) so
+      // the panel can report which list the profile landed in.
+      return { ok: true, ...data };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : "Network error" };
     }

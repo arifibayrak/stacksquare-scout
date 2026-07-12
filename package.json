@@ -1,6 +1,6 @@
 {
   "name": "stacksquare-scout",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Stacksquare Scout: capture LinkedIn profiles you browse into the Stacksquare CRM",
   "type": "module",
