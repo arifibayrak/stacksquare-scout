@@ -23,7 +23,41 @@ export default defineBackground(() => {
       handleLists().then(sendResponse);
       return true;
     }
+    if (message?.type === "DM_CAPTURE") {
+      handleDmCapture(message.payload).then(sendResponse);
+      return true;
+    }
   });
+
+  async function handleDmCapture(payload: unknown) {
+    const { apiUrl, apiKey } = await browser.storage.sync.get([
+      "apiUrl",
+      "apiKey",
+    ]);
+    const base = (apiUrl as string) || "https://stacksquare.ai";
+    if (!apiKey) return { ok: false, error: "No API key set." };
+    try {
+      const res = await fetch(`${base}/api/outreach/linkedin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey as string,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, error: err.error ?? `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return { ok: true, ...data };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Network error",
+      };
+    }
+  }
 
   async function handleLists() {
     const { apiUrl, apiKey } = await browser.storage.sync.get([

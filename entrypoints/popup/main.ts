@@ -1,4 +1,5 @@
 const toggle = document.getElementById("toggle") as HTMLInputElement;
+const dmtoggle = document.getElementById("dmtoggle") as HTMLInputElement;
 const status = document.getElementById("status")!;
 const target = document.getElementById("target")!;
 
@@ -10,13 +11,15 @@ function escapeHtml(s: string): string {
 }
 
 async function render() {
-  const { scouting, lastCapture, scoutListName } =
+  const { scouting, dmlog, lastCapture, scoutListName } =
     await browser.storage.local.get([
       "scouting",
+      "dmlog",
       "lastCapture",
       "scoutListName",
     ]);
   toggle.checked = Boolean(scouting);
+  dmtoggle.checked = dmlog === true;
   // Which CRM list captures are filed into. Set from the on-page Scout panel.
   target.innerHTML = scoutListName
     ? `Filing to <b>${escapeHtml(scoutListName as string)}</b>`
@@ -27,14 +30,21 @@ async function render() {
       mins < 1 ? "just now" : `${mins}m ago`
     })`;
   } else {
-    status.textContent = scouting
+    const base = scouting
       ? "Panel shows on profiles. Click Send to capture."
       : "Off. The capture panel is hidden.";
+    status.textContent =
+      dmlog === true ? `${base} DM logging is ON.` : base;
   }
 }
 
 toggle.addEventListener("change", async () => {
   await browser.storage.local.set({ scouting: toggle.checked });
+  render();
+});
+
+dmtoggle.addEventListener("change", async () => {
+  await browser.storage.local.set({ dmlog: dmtoggle.checked });
   render();
 });
 

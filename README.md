@@ -29,6 +29,18 @@ lands in the Stacksquare CRM scout queue (`stacksquare.ai/admin/scout`).
   page, ready to verify/enrich/promote. "Scout queue (unsorted)" is the
   default and keeps the old behavior. Lists are fetched from
   `stacksquare.ai/api/segments` (same API key).
+- **DM conversation logging (v0.7, default OFF).** A separate "Log DMs" toggle
+  in the popup. When ON, opening one of your own LinkedIn message threads
+  (`/messaging/thread/*`) reads the conversation LinkedIn already rendered in
+  your browser (`lib/messaging-parser.ts`, `msg-dom@1`, with a best-effort
+  `msg-embedded@1`) and posts it to the CRM. It never calls LinkedIn APIs and
+  takes no automated actions, same posture as profile capture (see the
+  stacksquare repo `docs/adr/0002` + `0004`). The server summarizes the thread
+  with AI and files the summary on the matching contact's outreach timeline;
+  raw message bodies are never stored. Threads that match no contact land in an
+  "Unmatched conversations" review list in the admin. A fast-model triage step
+  drops automated / content-free threads. Capture happens once per thread view;
+  re-opening is a cheap no-op unless there are new messages.
 
 ## Dev
 
@@ -49,3 +61,10 @@ to a segment when the payload carries a `segmentId`, else the queue),
 `src/app/api/segments/route.ts` (the List picker's source),
 `src/app/admin/scout/` (queue UI), `src/lib/actions/captures.ts`
 (promote/dismiss). List-routed profiles land in `src/app/admin/research/[id]`.
+
+DM logging (v0.7) posts to `src/app/api/outreach/linkedin/route.ts` (triage +
+summarize + attribute), summaries land on the contact detail page's Outreach
+timeline, unmatched threads are reviewed in `src/app/admin/outreach`, and
+`src/lib/actions/outreach-threads.ts` handles link/dismiss + the paste-in
+fallback. Schema: `contact_identities`, `outreach_threads`, `outreach_timeline`
+(apply `scripts/apply-outreach-timeline-ddl.mjs`).
