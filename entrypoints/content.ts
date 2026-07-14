@@ -274,8 +274,8 @@ export default defineContentScript({
       }
       if (res.skipped) showChip("Scout: not logged (filtered)");
       else if (res.matched)
-        showChip(`Scout: logged → ${res.contactName ?? "contact"}`);
-      else showChip("Scout: logged (unmatched, review in CRM)");
+        showChip(`Scout: queued → ${res.contactName ?? "contact"} (review in CRM)`);
+      else showChip("Scout: queued for review (unmatched)");
     }
 
     // The second pass catches the lazy-loaded experience section. Auto DM

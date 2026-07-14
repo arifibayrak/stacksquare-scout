@@ -285,7 +285,7 @@ export function mountLogConversation(
         return;
       }
       setStatus(
-        `Logged to ${data.contactName ?? "contact"}${data.created ? " (new contact created)" : ""} ✓`,
+        `Queued for review → ${data.contactName ?? "contact"}${data.created ? " (new contact)" : ""}. Accept it in the Scout queue.`,
         "ok",
       );
       // Ready for the next log: clear the paste + new-contact fields, keep the
