@@ -13,22 +13,31 @@ export default defineContentScript({
     let dmTimer: ReturnType<typeof setTimeout> | undefined;
     // The popup toggle controls whether the capture panel is shown.
     let scoutingOn = true;
-    // Separate, default-OFF toggle for logging DM conversations.
-    let dmlogOn = false;
+    // DM logging mode (default OFF). "auto" = capture when a thread opens;
+    // "manual" = show a button on the thread that captures on click.
+    type DmMode = "off" | "manual" | "auto";
+    let dmMode: DmMode = "off";
     let lastDmThreadId = "";
-    browser.storage.local.get(["scouting", "dmlog"]).then(({ scouting, dmlog }) => {
-      scoutingOn = scouting !== false;
-      dmlogOn = dmlog === true;
-      refreshPanel();
-    });
+    let dmButton: HTMLButtonElement | undefined;
+    browser.storage.local
+      .get(["scouting", "dmMode", "dmlog"])
+      .then(({ scouting, dmMode: m, dmlog }) => {
+        scoutingOn = scouting !== false;
+        // Migrate the old boolean toggle: dmlog === true -> auto.
+        dmMode = (m as DmMode) ?? (dmlog === true ? "auto" : "off");
+        refreshPanel();
+        updateDmButton();
+      });
     browser.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
       if (changes.scouting) {
         scoutingOn = changes.scouting.newValue !== false;
         refreshPanel();
       }
-      if (changes.dmlog) {
-        dmlogOn = changes.dmlog.newValue === true;
+      if (changes.dmMode) {
+        dmMode = (changes.dmMode.newValue as DmMode) ?? "off";
+        updateDmButton();
+        scheduleAutoDm();
       }
     });
 
@@ -63,6 +72,7 @@ export default defineContentScript({
       clearInterval(urlTimer);
       clearTimeout(autoScanTimer);
       clearTimeout(dmTimer);
+      dmButton?.remove();
       try {
         panel.destroy();
       } catch {
@@ -161,7 +171,7 @@ export default defineContentScript({
       if (!chip) {
         chip = document.createElement("div");
         chip.style.cssText =
-          "position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
+          "position:fixed;bottom:64px;right:20px;z-index:2147483647;" +
           "background:#0e0d0b;color:#f0ebdf;font:12px ui-monospace,Menlo,monospace;" +
           "padding:8px 12px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);" +
           "max-width:260px;opacity:0;transition:opacity .2s;pointer-events:none;";
@@ -175,16 +185,60 @@ export default defineContentScript({
       }, 3200);
     }
 
-    // On a /messaging/thread/* page, once it settles, read the open thread and
-    // send it once per thread view. The server dedups re-sends cheaply, so
-    // re-opening a thread is a no-op unless there are new messages.
-    async function maybeCaptureDm() {
-      if (!alive() || !dmlogOn) return;
+    const DM_BTN_LABEL = "Log this chat → Scout";
+
+    // Semi-auto: show a button on the open thread; capture on click.
+    function updateDmButton() {
+      if (!alive()) return;
+      const show =
+        dmMode === "manual" && Boolean(threadIdFromUrl(location.href));
+      if (show) {
+        if (!dmButton) {
+          dmButton = document.createElement("button");
+          dmButton.type = "button";
+          dmButton.textContent = DM_BTN_LABEL;
+          dmButton.style.cssText =
+            "position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
+            "background:#1d3fbf;color:#f0ebdf;font:12px ui-monospace,Menlo,monospace;" +
+            "padding:9px 14px;border:0;border-radius:8px;cursor:pointer;" +
+            "box-shadow:0 4px 16px rgba(0,0,0,.3);";
+          dmButton.addEventListener("click", () => captureDm({ manual: true }));
+          document.body.appendChild(dmButton);
+        }
+        dmButton.style.display = "";
+      } else if (dmButton) {
+        dmButton.style.display = "none";
+      }
+    }
+
+    // Auto: once a thread settles, capture it once per view. The server dedups
+    // re-sends, so re-opening a thread is a cheap no-op.
+    function scheduleAutoDm() {
+      clearTimeout(dmTimer);
+      if (dmMode !== "auto") return;
+      dmTimer = setTimeout(() => captureDm({ manual: false }), 4000);
+    }
+
+    // Read the open thread and send it. Manual capture is forced (ignores the
+    // per-view guard) and gives explicit feedback; auto capture is deduped.
+    async function captureDm({ manual }: { manual: boolean }) {
+      if (!alive() || dmMode === "off") return;
       const tid = threadIdFromUrl(location.href);
-      if (!tid || tid === lastDmThreadId) return;
+      if (!tid) {
+        if (manual) showChip("Scout: open a message thread first");
+        return;
+      }
+      if (!manual && tid === lastDmThreadId) return;
       const thread = parseThread();
-      if (!thread || thread.transcript.length === 0) return;
+      if (!thread || thread.transcript.length === 0) {
+        if (manual) showChip("Scout: no messages found in this thread");
+        return;
+      }
       lastDmThreadId = tid;
+      if (manual && dmButton) {
+        dmButton.disabled = true;
+        dmButton.textContent = "Logging…";
+      }
       const res = await browser.runtime.sendMessage({
         type: "DM_CAPTURE",
         payload: {
@@ -194,24 +248,31 @@ export default defineContentScript({
           parser: thread.parser,
         },
       });
+      if (manual && dmButton) {
+        dmButton.disabled = false;
+        dmButton.textContent = DM_BTN_LABEL;
+      }
       if (!res?.ok) {
-        if (res?.error) showChip(`Scout: ${res.error}`);
+        showChip(`Scout: ${res?.error ?? "failed"}`);
         return;
       }
-      if (res.unchanged) return;
-      if (res.skipped) showChip("Scout: DM not logged (filtered)");
+      if (res.unchanged) {
+        if (manual) showChip("Scout: already up to date");
+        return;
+      }
+      if (res.skipped) showChip("Scout: not logged (filtered)");
       else if (res.matched)
         showChip(`Scout: logged → ${res.contactName ?? "contact"}`);
       else showChip("Scout: logged (unmatched, review in CRM)");
     }
 
-    // The second pass catches the lazy-loaded experience section. The DM pass
-    // waits longer, since messaging bubbles stream in after the thread opens.
+    // The second pass catches the lazy-loaded experience section. Auto DM
+    // capture waits longer, since messaging bubbles stream in after open.
     function onUrlSettled() {
       setTimeout(refreshPanel, 1200);
       setTimeout(refreshPanel, 4000);
-      clearTimeout(dmTimer);
-      dmTimer = setTimeout(maybeCaptureDm, 4000);
+      updateDmButton();
+      scheduleAutoDm();
     }
 
     const urlTimer = setInterval(() => {

@@ -30,6 +30,10 @@
       }
       input:checked + .slider { background: #1d3fbf; }
       input:checked + .slider::before { transform: translateX(20px); }
+      .seg { display: inline-flex; border: 1px solid #2b2823; border-radius: 8px; overflow: hidden; }
+      .seg button { background: transparent; color: #867e70; border: 0; padding: 5px 9px; font: 11px ui-monospace, Menlo, monospace; letter-spacing: 0.04em; cursor: pointer; }
+      .seg button + button { border-left: 1px solid #2b2823; }
+      .seg button.active { background: #1d3fbf; color: #f0ebdf; }
       .status { margin-top: 14px; font-size: 12px; color: #867e70; min-height: 16px; }
       .target { margin-top: 8px; font-size: 12px; }
       .target b { color: #8ba3f5; font-weight: 600; }
@@ -53,10 +57,11 @@
       </div>
       <div class="row">
         <span class="label">Log DMs</span>
-        <label class="switch">
-          <input type="checkbox" id="dmtoggle" />
-          <span class="slider"></span>
-        </label>
+        <div class="seg" id="dmmode">
+          <button type="button" data-mode="off">Off</button>
+          <button type="button" data-mode="manual">Click</button>
+          <button type="button" data-mode="auto">Auto</button>
+        </div>
       </div>
       <div class="status" id="status"></div>
       <div class="target" id="target"></div>

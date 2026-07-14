@@ -29,11 +29,14 @@ lands in the Stacksquare CRM scout queue (`stacksquare.ai/admin/scout`).
   page, ready to verify/enrich/promote. "Scout queue (unsorted)" is the
   default and keeps the old behavior. Lists are fetched from
   `stacksquare.ai/api/segments` (same API key).
-- **DM conversation logging (v0.7, default OFF).** A separate "Log DMs" toggle
-  in the popup. When ON, opening one of your own LinkedIn message threads
-  (`/messaging/thread/*`) reads the conversation LinkedIn already rendered in
-  your browser (`lib/messaging-parser.ts`, `msg-dom@1`, with a best-effort
-  `msg-embedded@1`) and posts it to the CRM. It never calls LinkedIn APIs and
+- **DM conversation logging (v0.8, default OFF).** A "Log DMs" mode selector in
+  the popup with three settings: **Off**, **Click** (semi-auto), and **Auto**.
+  In **Auto**, opening one of your own LinkedIn message threads
+  (`/messaging/thread/*`) auto-captures it. In **Click**, a "Log this chat"
+  button appears on the open thread and captures it only when you press it. Both
+  read the conversation LinkedIn already rendered in your browser
+  (`lib/messaging-parser.ts`, `msg-dom@1`, with a best-effort `msg-embedded@1`)
+  and post it to the CRM. It never calls LinkedIn APIs and
   takes no automated actions, same posture as profile capture (see the
   stacksquare repo `docs/adr/0002` + `0004`). The server summarizes the thread
   with AI and files the summary on the matching contact's outreach timeline;
