@@ -46,74 +46,90 @@ function textOf(el: Element | null | undefined): string {
   return (el?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-/** Counterpart name + profile link from the open thread's header. */
-function readCounterpart(): ParsedThread["counterpart"] {
-  const name =
-    textOf(
-      document.querySelector(
-        ".msg-thread__link-to-profile .msg-entity-lockup__entity-title, " +
-          ".msg-entity-lockup__entity-title, " +
-          "#thread-detail-jump-target, " +
-          ".msg-thread h2",
-      ),
-    ) || null;
-
-  const profileLink =
-    (document.querySelector(
-      "a.msg-thread__link-to-profile, " +
-        ".msg-title-bar a[href*='/in/'], " +
-        ".msg-thread a[href*='/in/']",
-    ) as HTMLAnchorElement | null)?.href ?? null;
-
-  return {
-    name,
-    linkedinUrl: cleanLinkedin(profileLink),
-    headline: null,
-  };
+/** The logged-in user's own name, the reliable "me" signal. */
+function ownName(): string | null {
+  const alt =
+    document.querySelector(".global-nav__me-photo")?.getAttribute("alt") ||
+    document
+      .querySelector("img.global-nav__me-photo, .global-nav__me img")
+      ?.getAttribute("alt");
+  return alt ? alt.trim() : null;
 }
 
-/** The rendered message bubbles of the open conversation. */
-function readMessages(counterpartName: string | null): DmMessage[] {
-  const items = Array.from(
-    document.querySelectorAll(
-      "li.msg-s-message-list__event, .msg-s-message-list__event, .msg-s-event-listitem",
+/** Counterpart profile link from the thread header (often a member-id URL). */
+function counterpartLink(): string | null {
+  const a = document.querySelector(
+    "a.msg-thread__link-to-profile, " +
+      ".msg-title-bar a[href*='/in/'], " +
+      ".msg-thread a[href*='/in/'], " +
+      ".msg-s-message-group__profile-link",
+  ) as HTMLAnchorElement | null;
+  return cleanLinkedin(a?.href);
+}
+
+/** Fallback counterpart name from the header title, stripped of a11y noise. */
+function titleName(): string | null {
+  const t = textOf(
+    document.querySelector(
+      ".msg-entity-lockup__entity-title, #thread-detail-jump-target",
     ),
   );
-  const out: DmMessage[] = [];
+  if (!t) return null;
+  const cut = t
+    .split(/\s+Status is (?:offline|online)|\s+Open the options/i)[0]
+    .trim();
+  return cut || null;
+}
+
+type RawDm = DmMessage & { sender: string | null };
+
+/**
+ * The rendered message bubbles. Each `.msg-s-event-listitem` div carries a
+ * `--other` class for the counterpart's messages; self messages lack it. We
+ * iterate ONLY those divs (not the <li> wrappers, which lack the class and
+ * would double-count), and fall back to sender-vs-own-name for continuations.
+ */
+function readMessages(own: string | null): RawDm[] {
+  const items = Array.from(document.querySelectorAll(".msg-s-event-listitem"));
+  const out: RawDm[] = [];
   let currentSender: string | null = null;
   let currentAt: string | null = null;
+  let lastFrom: "me" | "them" = "me";
   const seen = new Set<string>();
 
   for (const item of items) {
-    // A message group re-declares the sender + timestamp for its first bubble;
-    // later bubbles in the group inherit them.
+    // A group re-declares sender + timestamp for its first bubble; later
+    // bubbles inherit them.
     const nameEl = item.querySelector(".msg-s-message-group__name");
     if (nameEl) currentSender = textOf(nameEl) || currentSender;
     const timeEl = item.querySelector(
       "time.msg-s-message-group__timestamp, .msg-s-message-group__timestamp, time",
     );
-    if (timeEl) {
+    if (timeEl)
       currentAt =
         (timeEl as HTMLTimeElement).dateTime || textOf(timeEl) || currentAt;
-    }
 
-    const bodyEl = item.querySelector(".msg-s-event-listitem__body");
-    const text = textOf(bodyEl);
+    const text = textOf(item.querySelector(".msg-s-event-listitem__body"));
     if (!text) continue;
 
-    // Dedup identical consecutive bodies (virtualized re-reads).
     const key = `${currentSender ?? ""}|${text}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const isOther =
-      /--other\b/.test(item.className) ||
-      (Boolean(counterpartName) && currentSender === counterpartName);
+    const cls = item.className;
+    let from: "me" | "them";
+    if (/--other\b/.test(cls)) from = "them";
+    else if (/--self\b/.test(cls)) from = "me";
+    else if (currentSender && own && currentSender === own) from = "me";
+    else if (currentSender && own && currentSender !== own) from = "them";
+    else from = lastFrom;
+    lastFrom = from;
 
     out.push({
-      from: isOther ? "them" : "me",
+      from,
       at: currentAt,
       text: text.slice(0, 8000),
+      sender: currentSender,
     });
   }
 
@@ -124,10 +140,26 @@ function readMessages(counterpartName: string | null): DmMessage[] {
 export function parseThreadDom(): ParsedThread | null {
   const conversationId = threadIdFromUrl(location.href);
   if (!conversationId) return null;
-  const counterpart = readCounterpart();
-  const transcript = readMessages(counterpart.name);
-  if (transcript.length === 0) return null;
-  return { conversationId, counterpart, transcript, parser: "msg-dom@1" };
+  const own = ownName();
+  const raw = readMessages(own);
+  if (raw.length === 0) return null;
+  const counterpartName =
+    raw.find((m) => m.from === "them")?.sender ?? titleName();
+  const transcript: DmMessage[] = raw.map(({ from, at, text }) => ({
+    from,
+    at,
+    text,
+  }));
+  return {
+    conversationId,
+    counterpart: {
+      name: counterpartName,
+      linkedinUrl: counterpartLink(),
+      headline: null,
+    },
+    transcript,
+    parser: "msg-dom@1",
+  };
 }
 
 /**
@@ -174,9 +206,8 @@ export function parseThreadEmbedded(): ParsedThread | null {
 
   if (events.length === 0) return null;
 
-  const counterpart = readCounterpart();
   // Without a reliable self-urn we cannot classify direction from embedded
-  // data alone; fall back to DOM classification if the DOM has the thread.
+  // data alone; prefer DOM classification when the DOM has the thread.
   const dom = parseThreadDom();
   if (dom && dom.transcript.length >= events.length) return dom;
 
@@ -185,7 +216,16 @@ export function parseThreadEmbedded(): ParsedThread | null {
     at: ev.at,
     text: ev.text.slice(0, 8000),
   }));
-  return { conversationId, counterpart, transcript, parser: "msg-embedded@1" };
+  return {
+    conversationId,
+    counterpart: {
+      name: titleName(),
+      linkedinUrl: counterpartLink(),
+      headline: null,
+    },
+    transcript,
+    parser: "msg-embedded@1",
+  };
 }
 
 /** Embedded when it clearly has the thread, DOM otherwise. */
