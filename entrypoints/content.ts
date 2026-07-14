@@ -135,10 +135,22 @@ export default defineContentScript({
 
     // Nothing is recorded automatically. The panel fills its fields from the
     // page; capturing happens only when the user clicks Send (or Scan).
+    let lastVisible: boolean | undefined;
     function refreshPanel() {
       if (!alive()) return;
       const slug = profileSlug(location.href);
-      panel.setVisible(Boolean(slug) && scoutingOn);
+      const visible = Boolean(slug) && scoutingOn;
+      panel.setVisible(visible);
+      // Log only on change: makes "panel never shows" self-diagnosing.
+      // profile=false -> not a /in/ page; scouting=false -> switch is off.
+      if (visible !== lastVisible) {
+        console.info(
+          `[scout] panel ${visible ? "shown" : "hidden"} (profile=${Boolean(
+            slug,
+          )}, scouting=${scoutingOn})`,
+        );
+        lastVisible = visible;
+      }
       if (!slug || !scoutingOn) return;
 
       const profile = parseProfile();

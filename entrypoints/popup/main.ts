@@ -21,9 +21,15 @@ async function render() {
       "lastCapture",
       "scoutListName",
     ]);
+  // Scouting is ON by default: an unset value is on (matches the content
+  // script and badge). Only an explicit `false` is off.
+  const scoutingOn = scouting !== false;
+  // Self-heal a fresh/unset install so the persisted state matches what every
+  // surface shows, in case onInstalled did not run for this install.
+  if (scouting === undefined) await browser.storage.local.set({ scouting: true });
   // Migrate the old boolean toggle: dmlog === true -> auto.
   const mode: DmMode = (dmMode as DmMode) ?? (dmlog === true ? "auto" : "off");
-  toggle.checked = Boolean(scouting);
+  toggle.checked = scoutingOn;
   for (const b of seg.querySelectorAll("button")) {
     b.classList.toggle(
       "active",
@@ -34,13 +40,14 @@ async function render() {
   target.innerHTML = scoutListName
     ? `Filing to <b>${escapeHtml(scoutListName as string)}</b>`
     : "Filing to the Scout queue";
-  if (lastCapture?.name) {
-    const mins = Math.round((Date.now() - lastCapture.at) / 60000);
-    statusEl.textContent = `Last capture: ${lastCapture.name} (${
+  const cap = lastCapture as { name?: string; at?: number } | undefined;
+  if (cap?.name) {
+    const mins = Math.round((Date.now() - (cap.at ?? Date.now())) / 60000);
+    statusEl.textContent = `Last capture: ${cap.name} (${
       mins < 1 ? "just now" : `${mins}m ago`
     })`;
   } else {
-    const base = scouting
+    const base = scoutingOn
       ? "Panel shows on profiles. Click Send to capture."
       : "Off. The capture panel is hidden.";
     const dmNote =
