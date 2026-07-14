@@ -1,4 +1,5 @@
 import { parseProfile, profileSlug } from "../lib/parser";
+import { parseThread, threadIdFromUrl } from "../lib/messaging-parser";
 import { ScoutPanel } from "../lib/panel";
 
 export default defineContentScript({
@@ -9,16 +10,25 @@ export default defineContentScript({
     let lastFilledUrl = "";
     let lastScannedUrl = "";
     let autoScanTimer: ReturnType<typeof setTimeout> | undefined;
+    let dmTimer: ReturnType<typeof setTimeout> | undefined;
     // The popup toggle controls whether the capture panel is shown.
     let scoutingOn = true;
-    browser.storage.local.get("scouting").then(({ scouting }) => {
+    // Separate, default-OFF toggle for logging DM conversations.
+    let dmlogOn = false;
+    let lastDmThreadId = "";
+    browser.storage.local.get(["scouting", "dmlog"]).then(({ scouting, dmlog }) => {
       scoutingOn = scouting !== false;
+      dmlogOn = dmlog === true;
       refreshPanel();
     });
     browser.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && changes.scouting) {
+      if (area !== "local") return;
+      if (changes.scouting) {
         scoutingOn = changes.scouting.newValue !== false;
         refreshPanel();
+      }
+      if (changes.dmlog) {
+        dmlogOn = changes.dmlog.newValue === true;
       }
     });
 
@@ -52,6 +62,7 @@ export default defineContentScript({
       dead = true;
       clearInterval(urlTimer);
       clearTimeout(autoScanTimer);
+      clearTimeout(dmTimer);
       try {
         panel.destroy();
       } catch {
@@ -143,10 +154,64 @@ export default defineContentScript({
       }, 1500);
     }
 
-    // The second pass catches the lazy-loaded experience section.
+    // Brief, unobtrusive status toast for DM logging (no persistent UI).
+    let chip: HTMLDivElement | undefined;
+    let chipTimer: ReturnType<typeof setTimeout> | undefined;
+    function showChip(text: string) {
+      if (!chip) {
+        chip = document.createElement("div");
+        chip.style.cssText =
+          "position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
+          "background:#0e0d0b;color:#f0ebdf;font:12px ui-monospace,Menlo,monospace;" +
+          "padding:8px 12px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);" +
+          "max-width:260px;opacity:0;transition:opacity .2s;pointer-events:none;";
+        document.body.appendChild(chip);
+      }
+      chip.textContent = text;
+      chip.style.opacity = "1";
+      clearTimeout(chipTimer);
+      chipTimer = setTimeout(() => {
+        if (chip) chip.style.opacity = "0";
+      }, 3200);
+    }
+
+    // On a /messaging/thread/* page, once it settles, read the open thread and
+    // send it once per thread view. The server dedups re-sends cheaply, so
+    // re-opening a thread is a no-op unless there are new messages.
+    async function maybeCaptureDm() {
+      if (!alive() || !dmlogOn) return;
+      const tid = threadIdFromUrl(location.href);
+      if (!tid || tid === lastDmThreadId) return;
+      const thread = parseThread();
+      if (!thread || thread.transcript.length === 0) return;
+      lastDmThreadId = tid;
+      const res = await browser.runtime.sendMessage({
+        type: "DM_CAPTURE",
+        payload: {
+          conversationId: thread.conversationId,
+          counterpart: thread.counterpart,
+          transcript: thread.transcript,
+          parser: thread.parser,
+        },
+      });
+      if (!res?.ok) {
+        if (res?.error) showChip(`Scout: ${res.error}`);
+        return;
+      }
+      if (res.unchanged) return;
+      if (res.skipped) showChip("Scout: DM not logged (filtered)");
+      else if (res.matched)
+        showChip(`Scout: logged → ${res.contactName ?? "contact"}`);
+      else showChip("Scout: logged (unmatched, review in CRM)");
+    }
+
+    // The second pass catches the lazy-loaded experience section. The DM pass
+    // waits longer, since messaging bubbles stream in after the thread opens.
     function onUrlSettled() {
       setTimeout(refreshPanel, 1200);
       setTimeout(refreshPanel, 4000);
+      clearTimeout(dmTimer);
+      dmTimer = setTimeout(maybeCaptureDm, 4000);
     }
 
     const urlTimer = setInterval(() => {
