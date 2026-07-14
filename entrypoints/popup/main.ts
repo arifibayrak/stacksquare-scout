@@ -1,3 +1,5 @@
+import { mountLogConversation } from "../../lib/log-conversation";
+
 const toggle = document.getElementById("toggle") as HTMLInputElement;
 const seg = document.getElementById("dmmode")!;
 const statusEl = document.getElementById("status")!;
@@ -78,5 +80,14 @@ document.getElementById("open-options")!.addEventListener("click", (e) => {
   e.preventDefault();
   browser.runtime.openOptionsPage();
 });
+
+// Open the roomy full-page logger in its own tab for long conversations.
+document.getElementById("open-log")!.addEventListener("click", (e) => {
+  e.preventDefault();
+  browser.tabs.create({ url: browser.runtime.getURL("/log.html") });
+});
+
+// Compact inline logger for quick pastes without leaving the popup.
+mountLogConversation(document.getElementById("log-root")!, { compact: true });
 
 render();

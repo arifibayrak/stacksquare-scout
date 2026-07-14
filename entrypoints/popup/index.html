@@ -5,7 +5,7 @@
     <title>Stacksquare Scout</title>
     <style>
       body {
-        width: 280px;
+        width: 340px;
         margin: 0;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         background: #0e0d0b;
@@ -37,6 +37,10 @@
       .status { margin-top: 14px; font-size: 12px; color: #867e70; min-height: 16px; }
       .target { margin-top: 8px; font-size: 12px; }
       .target b { color: #8ba3f5; font-weight: 600; }
+      .logsec { margin-top: 16px; border-top: 1px solid #2b2823; padding-top: 12px; }
+      .loghead { display: flex; align-items: baseline; justify-content: space-between; }
+      .loghead .label { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .loghead a { font-size: 11px; }
       .foot { margin-top: 16px; border-top: 1px solid #2b2823; padding-top: 10px; display: flex; justify-content: space-between; font-size: 12px; }
       a { color: #8ba3f5; text-decoration: none; }
       a:hover { text-decoration: underline; }
@@ -65,6 +69,13 @@
       </div>
       <div class="status" id="status"></div>
       <div class="target" id="target"></div>
+      <div class="logsec">
+        <div class="loghead">
+          <span class="label">Log a chat</span>
+          <a href="#" id="open-log">Full page ↗</a>
+        </div>
+        <div id="log-root"></div>
+      </div>
       <div class="foot">
         <a href="#" id="open-options">Settings</a>
         <a href="https://stacksquare.ai/admin/scout" target="_blank">Queue ↗</a>

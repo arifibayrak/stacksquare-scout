@@ -44,6 +44,16 @@ lands in the Stacksquare CRM scout queue (`stacksquare.ai/admin/scout`).
   "Unmatched conversations" review list in the admin. A fast-model triage step
   drops automated / content-free threads. Capture happens once per thread view;
   re-opening is a cheap no-op unless there are new messages.
+- **Log a conversation (v0.10).** A manual "paste from anywhere" logger for the
+  chats Scout cannot auto-scrape (WhatsApp, Gmail, SMS, notes). Available inline
+  in the popup ("Log a chat") and as a roomy full page (popup link, opens
+  `log.html` in a tab). Pick an existing contact (typeahead against
+  `stacksquare.ai/api/contacts/search`) or create a new one, choose the
+  platform, paste the whole conversation, and Send. The server structures +
+  summarizes it and files the summary on that contact's outreach timeline,
+  tagged with the platform; the raw paste is discarded. Posts to
+  `stacksquare.ai/api/outreach/paste` (same per-founder API key). New contacts
+  are deduped by LinkedIn/email so you never create a second record.
 
 ## Dev
 
