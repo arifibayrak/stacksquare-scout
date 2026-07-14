@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stacksquare Scout · Log a conversation</title>
+    <style>
+      body {
+        max-width: 560px;
+        margin: 40px auto;
+        padding: 0 24px 64px;
+        background: #0e0d0b;
+        color: #f0ebdf;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      h1 {
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .mark {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px;
+        width: 16px;
+        height: 16px;
+      }
+      .mark span {
+        background: #f0ebdf;
+        border-radius: 2px;
+      }
+      .mark span:last-child {
+        background: #1d3fbf;
+      }
+      p.hint {
+        color: #867e70;
+        font-size: 13px;
+        margin-top: 4px;
+        line-height: 1.5;
+      }
+      a {
+        color: #8ba3f5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>
+      <span class="mark"
+        ><span></span><span></span><span></span><span></span
+      ></span>
+      Log a conversation
+    </h1>
+    <p class="hint">
+      Paste a chat from WhatsApp, Gmail, or anywhere against a contact. It is
+      summarized by AI and filed on the contact's outreach timeline. The raw
+      text is never stored.
+    </p>
+    <div id="root"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,11 +1,27 @@
 export default defineBackground(() => {
+  // Scouting is ON by default: an unset value counts as on everywhere (content
+  // panel, badge, popup) so a fresh install shows the capture panel instead of
+  // silently doing nothing. `scouting === false` is the only "off" state.
+  const isOn = (v: unknown) => v !== false;
+
   // Badge mirrors the Scouting switch.
   async function syncBadge() {
     const { scouting } = await browser.storage.local.get("scouting");
     await browser.action.setBadgeBackgroundColor({ color: "#1d3fbf" });
-    await browser.action.setBadgeText({ text: scouting ? "ON" : "" });
+    await browser.action.setBadgeText({ text: isOn(scouting) ? "ON" : "" });
   }
   syncBadge();
+
+  // Persist the ON default on install/update so the popup toggle and the badge
+  // agree with the content script from the first profile you open.
+  browser.runtime.onInstalled.addListener(async () => {
+    const { scouting } = await browser.storage.local.get("scouting");
+    if (scouting === undefined) {
+      await browser.storage.local.set({ scouting: true });
+    }
+    syncBadge();
+  });
+
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.scouting) syncBadge();
   });
@@ -142,7 +158,7 @@ export default defineBackground(() => {
       await browser.action.setBadgeText({ text: "✓" });
       setTimeout(async () => {
         const { scouting } = await browser.storage.local.get("scouting");
-        await browser.action.setBadgeText({ text: scouting ? "ON" : "" });
+        await browser.action.setBadgeText({ text: isOn(scouting) ? "ON" : "" });
       }, 1800);
       // Pass the whole response through (destination, segment, id, status) so
       // the panel can report which list the profile landed in.

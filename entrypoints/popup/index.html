@@ -5,7 +5,7 @@
     <title>Stacksquare Scout</title>
     <style>
       body {
-        width: 280px;
+        width: 340px;
         margin: 0;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         background: #0e0d0b;
@@ -30,9 +30,17 @@
       }
       input:checked + .slider { background: #1d3fbf; }
       input:checked + .slider::before { transform: translateX(20px); }
+      .seg { display: inline-flex; border: 1px solid #2b2823; border-radius: 8px; overflow: hidden; }
+      .seg button { background: transparent; color: #867e70; border: 0; padding: 5px 9px; font: 11px ui-monospace, Menlo, monospace; letter-spacing: 0.04em; cursor: pointer; }
+      .seg button + button { border-left: 1px solid #2b2823; }
+      .seg button.active { background: #1d3fbf; color: #f0ebdf; }
       .status { margin-top: 14px; font-size: 12px; color: #867e70; min-height: 16px; }
       .target { margin-top: 8px; font-size: 12px; }
       .target b { color: #8ba3f5; font-weight: 600; }
+      .logsec { margin-top: 16px; border-top: 1px solid #2b2823; padding-top: 12px; }
+      .loghead { display: flex; align-items: baseline; justify-content: space-between; }
+      .loghead .label { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .loghead a { font-size: 11px; }
       .foot { margin-top: 16px; border-top: 1px solid #2b2823; padding-top: 10px; display: flex; justify-content: space-between; font-size: 12px; }
       a { color: #8ba3f5; text-decoration: none; }
       a:hover { text-decoration: underline; }
@@ -53,13 +61,21 @@
       </div>
       <div class="row">
         <span class="label">Log DMs</span>
-        <label class="switch">
-          <input type="checkbox" id="dmtoggle" />
-          <span class="slider"></span>
-        </label>
+        <div class="seg" id="dmmode">
+          <button type="button" data-mode="off">Off</button>
+          <button type="button" data-mode="manual">Click</button>
+          <button type="button" data-mode="auto">Auto</button>
+        </div>
       </div>
       <div class="status" id="status"></div>
       <div class="target" id="target"></div>
+      <div class="logsec">
+        <div class="loghead">
+          <span class="label">Log a chat</span>
+          <a href="#" id="open-log">Full page ↗</a>
+        </div>
+        <div id="log-root"></div>
+      </div>
       <div class="foot">
         <a href="#" id="open-options">Settings</a>
         <a href="https://stacksquare.ai/admin/scout" target="_blank">Queue ↗</a>
