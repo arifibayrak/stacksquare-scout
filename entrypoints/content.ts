@@ -131,6 +131,14 @@ export default defineContentScript({
       if (!alive()) return { ok: false, error: "Refresh the tab" };
       const res = await browser.runtime.sendMessage({ type: "LISTS" });
       return res ?? { ok: false, error: "No response from background" };
+    }, async (identity) => {
+      // Check whether this profile is already a contact / prospect / in lists.
+      if (!alive()) return { ok: false, error: "Refresh the tab" };
+      const res = await browser.runtime.sendMessage({
+        type: "LOOKUP",
+        payload: identity,
+      });
+      return res ?? { ok: false, error: "No response from background" };
     });
 
     // Nothing is recorded automatically. The panel fills its fields from the
@@ -159,7 +167,16 @@ export default defineContentScript({
       const url = cleanUrl();
       const fresh = url !== lastFilledUrl;
       panel.fill(profile, fresh);
-      if (fresh) lastFilledUrl = url;
+      if (fresh) {
+        lastFilledUrl = url;
+        // One CRM presence check per new profile (runs before the 4s second
+        // pass, whose fresh is false, so it fires exactly once).
+        panel.checkPresence({
+          linkedinUrl: profile.linkedinUrl,
+          name: profile.name || undefined,
+          company: profile.company || undefined,
+        });
+      }
       scheduleAutoScan(url);
     }
 

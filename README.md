@@ -22,6 +22,14 @@ lands in the Stacksquare CRM scout queue (`stacksquare.ai/admin/scout`).
 - **Queue, not contacts.** Captures upsert by LinkedIn URL into a review
   queue. Promote/dismiss happens in the admin; nothing pollutes the CRM
   automatically.
+- **CRM presence check (v0.12).** When you open a profile, the panel asks the
+  CRM whether we already know this person and shows it before you file them: a
+  green "Already a contact (stage)" badge, the research lists they are already
+  in, and their Scout-queue status. Lists they belong to get a checkmark in the
+  picker, and if you select a list they are already in, Send is disabled and
+  relabelled "Already in {list}" so the same person is never filed twice into
+  the same list. Read-only lookup against `stacksquare.ai/api/lookup` (same API
+  key); it leaks no CRM internals (no fit scores, notes, email, phone).
 - **Lists.** The panel's List picker files a profile straight into a CRM
   "database list" (a Research segment, e.g. "Turkish founders in London")
   instead of the generic queue. Pick a list once and every profile you Send
@@ -72,6 +80,8 @@ API key (in Vercel env as EXTENSION_KEY_ARIF / EXTENSION_KEY_KEREM).
 Lives in the stacksquare repo: `src/app/api/capture/route.ts` (ingest; routes
 to a segment when the payload carries a `segmentId`, else the queue),
 `src/app/api/segments/route.ts` (the List picker's source),
+`src/app/api/lookup/route.ts` (the CRM presence check: contact / prospect /
+lists / queue status for a LinkedIn URL),
 `src/app/admin/scout/` (queue UI), `src/lib/actions/captures.ts`
 (promote/dismiss). List-routed profiles land in `src/app/admin/research/[id]`.
 

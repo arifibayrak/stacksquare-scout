@@ -39,6 +39,10 @@ export default defineBackground(() => {
       handleLists().then(sendResponse);
       return true;
     }
+    if (message?.type === "LOOKUP") {
+      handleLookup(message.payload).then(sendResponse);
+      return true;
+    }
     if (message?.type === "DM_CAPTURE") {
       handleDmCapture(message.payload).then(sendResponse);
       return true;
@@ -92,6 +96,46 @@ export default defineBackground(() => {
       }
       const data = await res.json();
       return { ok: true, lists: data.lists ?? [] };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Network error",
+      };
+    }
+  }
+
+  // Pre-check whether a LinkedIn profile is already in the CRM (a contact, a
+  // prospect, which lists, and its Scout-queue status). Read-only; the panel
+  // uses it to show a presence badge and block re-filing into a list the person
+  // is already in.
+  async function handleLookup(payload: {
+    linkedinUrl?: string;
+    name?: string;
+    company?: string;
+    email?: string;
+  }) {
+    const { apiUrl, apiKey } = await browser.storage.sync.get([
+      "apiUrl",
+      "apiKey",
+    ]);
+    const base = (apiUrl as string) || "https://stacksquare.ai";
+    if (!apiKey) return { ok: false, error: "No API key set." };
+    const params = new URLSearchParams();
+    for (const k of ["linkedinUrl", "name", "company", "email"] as const) {
+      const v = payload?.[k];
+      if (v) params.set(k, v);
+    }
+    try {
+      const res = await fetch(`${base}/api/lookup?${params.toString()}`, {
+        headers: { "X-API-Key": apiKey as string },
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, error: err.error ?? `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return { ok: true, ...data };
     } catch (e) {
       return {
         ok: false,

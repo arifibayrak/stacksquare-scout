@@ -64,6 +64,14 @@ const CSS = `
   .status { margin-top: 8px; font-size: 11px; min-height: 14px; color: #867e70; }
   .status.ok { color: #6fbf73; }
   .status.err { color: #e0705a; }
+  .presence {
+    margin-bottom: 10px; padding: 7px 9px;
+    border: 1px solid #2b2823; border-radius: 6px;
+    font-size: 11px; line-height: 1.5; color: #867e70;
+  }
+  .presence:empty { display: none; margin: 0; padding: 0; border: none; }
+  .presence .known { color: #6fbf73; }
+  .presence .queue { color: #8ba3f5; }
 `;
 
 const FIELDS = [
@@ -98,6 +106,28 @@ export type PanelLoadLists = () => Promise<{
   error?: string;
 }>;
 
+export type LookupIdentity = {
+  linkedinUrl: string;
+  name?: string;
+  company?: string;
+  email?: string;
+};
+
+export type LookupResult = {
+  ok: boolean;
+  error?: string;
+  contact?: { id: string; name: string; stage: string } | null;
+  prospect?: {
+    id: string;
+    name: string;
+    matchedBy?: "linkedin" | "name_company";
+  } | null;
+  lists?: { id: string; name: string; status: string }[];
+  capture?: { status: string } | null;
+};
+
+export type PanelLookup = (identity: LookupIdentity) => Promise<LookupResult>;
+
 
 export class ScoutPanel {
   private shadow: ShadowRoot;
@@ -105,11 +135,18 @@ export class ScoutPanel {
   private panel: HTMLDivElement;
   private tab: HTMLDivElement;
   private touched = new Set<string>();
+  // segmentId -> membership status, for the lists this profile is already in.
+  private memberLists = new Map<string, string>();
+  private lastIdentity: LookupIdentity | null = null;
+  // Bumped on every new lookup and on every fresh profile, so a late response
+  // for a profile the user already navigated away from is dropped.
+  private lookupSeq = 0;
 
   constructor(
     private send: PanelSend,
     private scan: PanelScan,
     private loadLists: PanelLoadLists,
+    private lookup: PanelLookup,
   ) {
     const host = document.createElement("div");
     host.id = HOST_ID;
@@ -135,6 +172,7 @@ export class ScoutPanel {
         <button class="close" title="Collapse">✕</button>
       </div>
       <div class="body">
+        <div class="presence"></div>
         <label class="listlabel">
           List
           <button class="refresh" type="button" title="Refresh lists">↻</button>
@@ -183,6 +221,7 @@ export class ScoutPanel {
       const btn = this.panel.querySelector(".send") as HTMLButtonElement;
       btn.disabled = true;
       this.setStatus("Sending…", "");
+      const listId = this.values().list;
       const res = await this.send(this.values());
       btn.disabled = false;
       if (res.ok) {
@@ -194,9 +233,16 @@ export class ScoutPanel {
             : "In the queue ✓";
         this.setStatus(where, "ok");
         this.touched.clear();
+        // Reflect the new membership locally so the panel updates without a
+        // reload: mark the list ✓ and let the guard block a second Send.
+        if (res.destination === "segment" && listId) {
+          this.memberLists.set(listId, "discovered");
+          this.annotateListOptions();
+        }
       } else {
         this.setStatus(res.error ?? "Failed", "err");
       }
+      this.updateSendGuard();
     });
 
     // The chosen list persists globally: pick "Turkish founders in London"
@@ -205,16 +251,20 @@ export class ScoutPanel {
       'select[name="list"]',
     ) as HTMLSelectElement;
     listSel.addEventListener("change", () => {
-      const name =
-        listSel.options[listSel.selectedIndex]?.textContent ?? "";
+      // Strip the " ✓" already-in marker before persisting the display name.
+      const name = (
+        listSel.options[listSel.selectedIndex]?.textContent ?? ""
+      ).replace(/ ✓$/, "");
       browser.storage.local.set({
         scoutListId: listSel.value || "",
         scoutListName: listSel.value ? name : "",
       });
+      this.updateSendGuard();
     });
-    this.panel
-      .querySelector(".refresh")!
-      .addEventListener("click", () => this.populateLists());
+    this.panel.querySelector(".refresh")!.addEventListener("click", async () => {
+      await this.populateLists();
+      if (this.lastIdentity) this.checkPresence(this.lastIdentity);
+    });
     this.populateLists();
 
     browser.storage.local
@@ -254,6 +304,103 @@ export class ScoutPanel {
       Array.from(sel.options).some((o) => o.value === scoutListId)
         ? (scoutListId as string)
         : "";
+    // Re-apply the already-in marks (innerHTML was just rebuilt) and re-evaluate
+    // the Send guard against the restored selection.
+    this.annotateListOptions();
+    this.updateSendGuard();
+  }
+
+  /** Ask the backend whether this profile is already known and reflect it. */
+  async checkPresence(identity: LookupIdentity) {
+    this.lastIdentity = identity;
+    const seq = ++this.lookupSeq;
+    this.renderPresenceText("Checking CRM…");
+    const res = await this.lookup(identity);
+    // A newer lookup, or a fresh profile, superseded this one: drop the result.
+    if (seq !== this.lookupSeq) return;
+    if (!res.ok) {
+      // Stay quiet on failure (e.g. no API key set), like autoScan, so a
+      // missing key does not flash an error on every profile.
+      this.renderPresenceText("");
+      console.info("[scout] lookup failed:", res.error);
+      return;
+    }
+    this.memberLists = new Map((res.lists ?? []).map((l) => [l.id, l.status]));
+    this.renderPresence(res);
+    this.annotateListOptions();
+    this.updateSendGuard();
+  }
+
+  /** Set the presence block to a single muted line (or clear it when empty). */
+  private renderPresenceText(text: string) {
+    const box = this.shadow.querySelector(".presence") as HTMLElement | null;
+    if (box) box.textContent = text;
+  }
+
+  /** Render the presence summary: one line per fact we know about the person. */
+  private renderPresence(res: LookupResult) {
+    const box = this.shadow.querySelector(".presence") as HTMLElement | null;
+    if (!box) return;
+    box.textContent = "";
+    let lines = 0;
+    const line = (text: string, cls?: string) => {
+      const div = document.createElement("div");
+      div.textContent = text;
+      if (cls) div.className = cls;
+      box.appendChild(div);
+      lines++;
+    };
+    if (res.contact) {
+      line(`Already a contact (${res.contact.stage.replace(/_/g, " ")})`, "known");
+    }
+    if (res.lists && res.lists.length) {
+      const names = res.lists.map((l) => l.name).join(", ");
+      const possibly = res.prospect?.matchedBy === "name_company";
+      line(`${possibly ? "Possibly in" : "In"} lists: ${names}`, "known");
+    }
+    if (res.capture?.status === "pending") line("In Scout queue", "queue");
+    else if (res.capture?.status === "dismissed")
+      line("Previously dismissed from queue");
+    if (!lines) line("New. Not in the CRM yet.");
+  }
+
+  /** Suffix a " ✓" on list options the person is already a member of. */
+  private annotateListOptions() {
+    const sel = this.shadow.querySelector(
+      'select[name="list"]',
+    ) as HTMLSelectElement | null;
+    if (!sel) return;
+    for (const opt of Array.from(sel.options)) {
+      if (!opt.value) continue;
+      const base = (opt.textContent ?? "").replace(/ ✓$/, "");
+      opt.textContent = this.memberLists.has(opt.value) ? `${base} ✓` : base;
+    }
+  }
+
+  /**
+   * Hard guard: if the selected list already contains this person, disable Send
+   * and relabel it, so a duplicate filing is impossible. Otherwise Send is the
+   * normal "Send to queue".
+   */
+  private updateSendGuard() {
+    const sendBtn = this.panel.querySelector(
+      ".send",
+    ) as HTMLButtonElement | null;
+    const sel = this.shadow.querySelector(
+      'select[name="list"]',
+    ) as HTMLSelectElement | null;
+    if (!sendBtn || !sel) return;
+    const listId = sel.value;
+    if (listId && this.memberLists.has(listId)) {
+      const name = (sel.options[sel.selectedIndex]?.textContent ?? "")
+        .replace(/ ✓$/, "")
+        .trim();
+      sendBtn.disabled = true;
+      sendBtn.textContent = `Already in ${name}`;
+    } else {
+      sendBtn.disabled = false;
+      sendBtn.textContent = "Send to queue";
+    }
   }
 
   private scanning = false;
@@ -359,6 +506,13 @@ export class ScoutPanel {
       set("phone", "");
       set("seniority", "");
       this.setStatus("", "");
+      // New profile: discard any in-flight lookup and clear stale membership so
+      // profile B never shows profile A's lists, ✓ marks, or Send guard.
+      this.lookupSeq++;
+      this.memberLists.clear();
+      this.renderPresenceText("");
+      this.annotateListOptions();
+      this.updateSendGuard();
     }
   }
 
